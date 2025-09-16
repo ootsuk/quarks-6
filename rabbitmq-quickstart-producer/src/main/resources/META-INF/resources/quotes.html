@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quarkus RabbitMQ 見積もりシステム</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+        
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #0056b3;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        
+        .status.pending {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .status.completed {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .quote-result {
+            margin-top: 20px;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        
+        .quote-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .quote-item:last-child {
+            border-bottom: none;
+        }
+        
+        .quote-product {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .quote-price {
+            font-size: 18px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        
+        .quote-time {
+            font-size: 12px;
+            color: #666;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+        }
+        
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .connection-status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .connection-status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Quarkus RabbitMQ 見積もりシステム</h1>
+        
+        <div class="form-group">
+            <label for="productName">商品名を入力してください:</label>
+            <input type="text" id="productName" placeholder="例: iPhone 15 Pro, MacBook Air, etc.">
+        </div>
+        
+        <button onclick="requestQuote()" id="requestButton">見積もり依頼を送信</button>
+        
+        <div id="status" class="status" style="display: none;"></div>
+        
+        <div id="quoteResults" style="display: none;">
+            <h3>📊 見積もり結果</h3>
+            <div id="quoteList"></div>
+        </div>
+    </div>
+    
+    <div id="connectionStatus" class="connection-status disconnected">接続中...</div>
+
+    <script>
+        let currentRequestId = null;
+        let quotes = new Map();
+        let pollInterval = null;
+        
+        // 見積もり依頼を送信
+        async function requestQuote() {
+            const productName = document.getElementById('productName').value.trim();
+            
+            if (!productName) {
+                alert('商品名を入力してください');
+                return;
+            }
+            
+            const requestButton = document.getElementById('requestButton');
+            const statusDiv = document.getElementById('status');
+            
+            // ボタンを無効化
+            requestButton.disabled = true;
+            requestButton.textContent = '送信中...';
+            
+            try {
+                // 見積もり依頼を送信
+                const response = await fetch('/quotes/request', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        product: productName
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const result = await response.json();
+                currentRequestId = result.requestId;
+                
+                // ステータスを更新
+                statusDiv.className = 'status pending';
+                statusDiv.textContent = `見積もり依頼を送信しました (ID: ${currentRequestId})`;
+                statusDiv.style.display = 'block';
+                
+                // 結果表示エリアを表示
+                document.getElementById('quoteResults').style.display = 'block';
+                
+                // ポーリングを開始
+                startPolling();
+                
+                console.log('見積もり依頼を送信:', result);
+                
+            } catch (error) {
+                console.error('見積もり依頼の送信に失敗:', error);
+                statusDiv.className = 'status error';
+                statusDiv.textContent = `エラー: ${error.message}`;
+                statusDiv.style.display = 'block';
+            } finally {
+                // ボタンを再有効化
+                requestButton.disabled = false;
+                requestButton.textContent = '見積もり依頼を送信';
+            }
+        }
+        
+        // ポーリングを開始
+        function startPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+            
+            pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/quotes/results');
+                    if (response.ok) {
+                        const results = await response.json();
+                        
+                        // 新しい見積もり結果をチェック
+                        for (const [requestId, quote] of Object.entries(results)) {
+                            if (!quotes.has(requestId)) {
+                                quotes.set(requestId, quote);
+                                
+                                // 現在の依頼に対する見積もり結果の場合、UIを更新
+                                if (currentRequestId && quote.requestId === currentRequestId) {
+                                    updateQuoteDisplay(quote);
+                                    stopPolling(); // 見積もり完了したらポーリングを停止
+                                }
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.error('見積もり結果の取得に失敗:', error);
+                }
+            }, 1000); // 1秒ごとにポーリング
+        }
+        
+        // ポーリングを停止
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+        
+        // 見積もり結果の表示を更新
+        function updateQuoteDisplay(quote) {
+            const statusDiv = document.getElementById('status');
+            const quoteListDiv = document.getElementById('quoteList');
+            
+            // ステータスを完了に更新
+            statusDiv.className = 'status completed';
+            statusDiv.textContent = `見積もり完了: ${quote.product} - ¥${quote.price}`;
+            
+            // 見積もり結果をリストに追加
+            const quoteItem = document.createElement('div');
+            quoteItem.className = 'quote-item';
+            quoteItem.innerHTML = `
+                <div>
+                    <div class="quote-product">${quote.product}</div>
+                    <div class="quote-time">${new Date(quote.timestamp).toLocaleString()}</div>
+                </div>
+                <div class="quote-price">¥${quote.price}</div>
+            `;
+            
+            quoteListDiv.appendChild(quoteItem);
+        }
+        
+        // 接続ステータスを更新
+        function updateConnectionStatus(connected) {
+            const statusDiv = document.getElementById('connectionStatus');
+            if (connected) {
+                statusDiv.className = 'connection-status connected';
+                statusDiv.textContent = '接続済み';
+            } else {
+                statusDiv.className = 'connection-status disconnected';
+                statusDiv.textContent = '切断';
+            }
+        }
+        
+        // ページ読み込み時に既存の見積もり結果を読み込み
+        window.addEventListener('load', async function() {
+            updateConnectionStatus(true);
+            
+            try {
+                const response = await fetch('/quotes/results');
+                if (response.ok) {
+                    const results = await response.json();
+                    
+                    // 既存の見積もり結果を表示
+                    if (Object.keys(results).length > 0) {
+                        document.getElementById('quoteResults').style.display = 'block';
+                        
+                        for (const [requestId, quote] of Object.entries(results)) {
+                            quotes.set(requestId, quote);
+                            
+                            const quoteListDiv = document.getElementById('quoteList');
+                            const quoteItem = document.createElement('div');
+                            quoteItem.className = 'quote-item';
+                            quoteItem.innerHTML = `
+                                <div>
+                                    <div class="quote-product">${quote.product}</div>
+                                    <div class="quote-time">${new Date(quote.timestamp).toLocaleString()}</div>
+                                </div>
+                                <div class="quote-price">¥${quote.price}</div>
+                            `;
+                            
+                            quoteListDiv.appendChild(quoteItem);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('既存の見積もり結果の取得に失敗:', error);
+            }
+        });
+        
+        // ページを離れる時にポーリングを停止
+        window.addEventListener('beforeunload', function() {
+            stopPolling();
+        });
+    </script>
+</body>
+</html>

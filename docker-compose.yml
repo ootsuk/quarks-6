@@ -1,0 +1,56 @@
+version: '3.8'
+
+services:
+  # RabbitMQブローカー
+  rabbit:
+    image: rabbitmq:3-management
+    container_name: rabbitmq-quickstart
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"    # AMQPポート
+      - "15672:15672"  # 管理UIポート
+    networks:
+      - rabbitmq-quickstart-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Producerアプリケーション
+  producer:
+    build:
+      context: rabbitmq-quickstart-producer
+      dockerfile: src/main/docker/Dockerfile.jvm
+    container_name: quarkus-producer
+    environment:
+      RABBITMQ_HOST: rabbit
+      RABBITMQ_PORT: 5672
+    ports:
+      - "8080:8080"
+    networks:
+      - rabbitmq-quickstart-network
+    depends_on:
+      rabbit:
+        condition: service_healthy
+
+  # Processorアプリケーション
+  processor:
+    build:
+      context: rabbitmq-quickstart-processor
+      dockerfile: src/main/docker/Dockerfile.jvm
+    container_name: quarkus-processor
+    environment:
+      RABBITMQ_HOST: rabbit
+      RABBITMQ_PORT: 5672
+    networks:
+      - rabbitmq-quickstart-network
+    depends_on:
+      rabbit:
+        condition: service_healthy
+
+networks:
+  rabbitmq-quickstart-network:
+    name: rabbitmq-quickstart
